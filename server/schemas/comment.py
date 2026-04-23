@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Literal
 
 
 class CommentCreate(BaseModel):
@@ -25,3 +26,7 @@ class CommentResponse(BaseModel):
 class CommentListResponse(BaseModel):
     items: list[CommentResponse]
     total: int
+
+
+class CommentVoteRequest(BaseModel):
+    vote: Literal["up", "down"]

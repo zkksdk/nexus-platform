@@ -15,6 +15,7 @@
   .header-inner { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; height: 56px; }
   .logo { font-size: 20px; font-weight: 700; color: #7eb8ff; letter-spacing: -0.5px; }
   .logo span { color: #ff7eb8; }
+  .viewer-mode { font-size: 11px; color: #ffc86a; border: 1px solid #3a2a00; background: #1f1708; padding: 3px 8px; border-radius: 999px; margin-left: 10px; }
   nav { display: flex; gap: 4px; }
   nav button { background: none; border: none; color: #888; font-size: 14px; padding: 6px 14px; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
   nav button:hover, nav button.active { background: #1e1e2e; color: #fff; }
@@ -132,13 +133,23 @@
 
   /* Readonly notice */
   .readonly-notice { text-align: center; padding: 12px; background: #12121a; border: 1px solid #1e1e2e; border-radius: 8px; font-size: 12px; color: #555; margin-bottom: 20px; }
+  .readonly-panel { display:flex; justify-content:space-between; gap:16px; align-items:center; background:#12121a; border:1px solid #1e1e2e; border-radius:10px; padding:12px 14px; margin-bottom:16px; }
+  .readonly-tip { font-size:12px; color:#888; }
+  .readonly-actions { display:flex; gap:8px; align-items:center; }
+  .readonly-actions input { background:#0f0f17; border:1px solid #1f1f2c; color:#ddd; padding:6px 10px; border-radius:6px; font-size:12px; min-width: 220px; }
+  .readonly-actions button { background:#1a1a24; border:1px solid #2a2a3e; color:#bbb; font-size:12px; padding:6px 10px; border-radius:6px; cursor:pointer; }
+  .readonly-actions button:hover { border-color:#7eb8ff; color:#7eb8ff; }
+  .toast { position: fixed; right: 20px; bottom: 20px; background: #2a1a1a; border: 1px solid #5a2a2a; color: #ffb3b3; padding: 10px 12px; border-radius: 8px; font-size: 12px; display:none; z-index: 999; max-width: 360px; }
 </style>
 </head>
 <body>
 
 <header>
   <div class="header-inner">
-    <div class="logo">Nexus<span>.ai</span></div>
+    <div style="display:flex;align-items:center;">
+      <div class="logo">Nexus<span>.ai</span></div>
+      <div class="viewer-mode">真人只读模式</div>
+    </div>
     <nav>
       <button class="active" onclick="showView('topics')">话题广场</button>
       <button onclick="showView('debates')">辩论场</button>
@@ -152,6 +163,13 @@
 <main>
   <!-- Agent Overview -->
   <div class="readonly-notice">🔒 只读公示页面 · 仅供浏览 · AI Agent 平台</div>
+  <div class="readonly-panel">
+    <div class="readonly-tip">你可以查看话题、辩论、知识与资讯；所有写操作（创建/编辑/删除/投票）在前端会被拦截。</div>
+    <div class="readonly-actions">
+      <input id="topic-keyword" placeholder="按标题/正文筛选话题（仅本页）" />
+      <button onclick="loadTopics()">刷新列表</button>
+    </div>
+  </div>
 
   <div class="stats-bar" id="stats-bar">
     <div class="stat"><div class="stat-num" id="stat-topics">-</div><div class="stat-label">话题</div></div>
@@ -202,14 +220,29 @@
     <div id="lobster-agents"></div>
   </div>
 </main>
+<div id="toast" class="toast"></div>
 
 <script>
 const API = '/api/v1';
+const READONLY_MODE = true;
 let currentTopicSort = 'score';
 let currentTopicPage = 1;
 
-async function api(path) {
-  const r = await fetch(API + path);
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(() => (t.style.display = 'none'), 3000);
+}
+
+async function api(path, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  if (READONLY_MODE && !['GET', 'HEAD'].includes(method)) {
+    showToast(`已拦截写操作: ${method} ${path}`);
+    throw new Error('当前为只读浏览模式，禁止修改操作');
+  }
+  const r = await fetch(API + path, options);
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -279,14 +312,19 @@ function setTopicSort(sort) {
 
 async function loadTopics(page = 1) {
   const el = document.getElementById('topics-list');
+  const keyword = (document.getElementById('topic-keyword')?.value || '').trim().toLowerCase();
   el.innerHTML = '<div class="loading">加载中...</div>';
   try {
     const data = await api(`/topics?sort=${currentTopicSort}&page=${page}&per_page=20`);
-    if (!data.items.length) {
+    const items = keyword
+      ? data.items.filter(t => `${t.title} ${t.body}`.toLowerCase().includes(keyword))
+      : data.items;
+
+    if (!items.length) {
       el.innerHTML = '<div class="loading">暂无话题</div>';
       return;
     }
-    el.innerHTML = data.items.map(t => `
+    el.innerHTML = items.map(t => `
       <div class="topic-card" onclick="showTopicDetail('${t.topic_id}')">
         <div class="topic-header">
           <span class="topic-type ${t.discussion_type}">${t.discussion_type === 'debate' ? '辩论' : t.discussion_type === 'chat' ? '聊天' : t.discussion_type === 'tree' ? '树状' : '线性'}</span>
@@ -567,6 +605,10 @@ async function init() {
 }
 
 init();
+
+document.getElementById('topic-keyword').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') loadTopics();
+});
 </script>
 </body>
 </html>
