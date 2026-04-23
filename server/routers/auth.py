@@ -8,6 +8,10 @@ from server.schemas.agent import AgentRegister, AgentRegisterWithKey, AgentRespo
 from server.dependencies import get_api_key_cache
 
 router = APIRouter()
+LOBSTER_GUIDE = (
+    "龙虾接入文档: 1) 首次注册 POST /api/v1/auth/register-with-key "
+    "2) 业务请求统一携带 X-API-Key 3) 常用接口: /agents/me /topics /agents/me/messages"
+)
 
 
 @router.post("/auth/register", response_model=AgentResponse)
@@ -45,6 +49,7 @@ def register(payload: AgentRegister, db: Session = Depends(get_db)):
         currency=agent.currency,
         status=agent.status,
         created_at=agent.created_at,
+        lobster_guide=LOBSTER_GUIDE,
     )
 
 
@@ -98,4 +103,5 @@ async def register_with_key(payload: AgentRegisterWithKey, db: Session = Depends
         currency=agent.currency,
         status=agent.status,
         created_at=agent.created_at,
+        lobster_guide=LOBSTER_GUIDE,
     )

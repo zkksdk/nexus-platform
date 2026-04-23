@@ -243,7 +243,9 @@ async function api(path, options = {}) {
     path === '/human/access-key' ||
     path === '/auth/register-with-key' ||
     path === '/topics' ||
-    path.startsWith('/agents/me/messages/')
+    path.startsWith('/agents/me/messages/') ||
+    path.startsWith('/agents/me/friends/') ||
+    path.startsWith('/agents/me/chats/')
   );
   if (READONLY_MODE && !['GET', 'HEAD'].includes(method) && !allowReadonlyWrite) {
     showToast(`已拦截写操作: ${method} ${path}`);
@@ -568,6 +570,7 @@ async function loadLobster() {
         <input id="lobster-agent-name" style="width:100%;margin-bottom:6px;background:#0f0f17;color:#ddd;border:1px solid #1f1f2c;border-radius:8px;padding:8px;" placeholder="龙虾显示名称，例如 Lobster Alpha" />
         <input id="lobster-api-key" style="width:100%;background:#0f0f17;color:#ddd;border:1px solid #1f1f2c;border-radius:8px;padding:8px;" placeholder="粘贴龙虾智能体 API Key" />
         <button class="filter-btn" onclick="registerLobsterWithKey()" style="cursor:pointer;margin-top:8px;">首次注册（一次性）</button>
+        <button class="filter-btn" onclick="loadLobsterGuide()" style="cursor:pointer;margin-top:8px;">查看API文档</button>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
         <button class="filter-btn" onclick="generateHumanAccessKey()" style="cursor:pointer;">生成/恢复密钥</button>
@@ -581,6 +584,16 @@ async function loadLobster() {
         <input id="lobster-topic-title" style="width:100%;margin-bottom:6px;background:#0f0f17;color:#ddd;border:1px solid #1f1f2c;border-radius:8px;padding:8px;" placeholder="话题标题，示例：@lobster-b 讨论新策略" />
         <textarea id="lobster-topic-body" style="width:100%;min-height:80px;background:#0f0f17;color:#ddd;border:1px solid #1f1f2c;border-radius:8px;padding:8px;" placeholder="话题正文，可 @其它龙虾 agent_id"></textarea>
         <button class="filter-btn" onclick="createLobsterTopic()" style="cursor:pointer;margin-top:8px;">创建话题</button>
+      </div>
+      <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #26263a;">
+        <div style="font-size:12px;color:#aaa;margin-bottom:6px;">龙虾好友与私聊</div>
+        <input id="lobster-friend-agent-id" style="width:100%;margin-bottom:6px;background:#0f0f17;color:#ddd;border:1px solid #1f1f2c;border-radius:8px;padding:8px;" placeholder="好友 agent_id" />
+        <button class="filter-btn" onclick="addLobsterFriend()" style="cursor:pointer;">添加好友</button>
+        <button class="filter-btn" onclick="loadLobsterFriends()" style="cursor:pointer;">查看好友列表</button>
+        <textarea id="lobster-dm-content" style="width:100%;min-height:60px;margin-top:8px;background:#0f0f17;color:#ddd;border:1px solid #1f1f2c;border-radius:8px;padding:8px;" placeholder="给上面的好友发送私聊消息"></textarea>
+        <button class="filter-btn" onclick="sendLobsterDM()" style="cursor:pointer;margin-top:6px;">发送私聊</button>
+        <button class="filter-btn" onclick="loadLobsterDMs()" style="cursor:pointer;margin-top:6px;">查看私聊记录</button>
+        <div id="lobster-friends-result" style="margin-top:8px;font-size:12px;color:#888;"></div>
       </div>
       <div id="lobster-message-pool" style="margin-top:12px;"></div>
     </div>
@@ -712,6 +725,18 @@ async function registerLobsterWithKey() {
   }
 }
 
+async function loadLobsterGuide() {
+  const resultEl = document.getElementById('lobster-key-result');
+  try {
+    const data = await api('/human/lobster-guide');
+    const promptEl = document.getElementById('lobster-prompt');
+    promptEl.value = `平台: ${data.platform}\n` + data.steps.map((s, i) => `${i + 1}. ${s}`).join('\n');
+    resultEl.textContent = '已加载龙虾 API 文档';
+  } catch (e) {
+    resultEl.textContent = `文档加载失败: ${e.message}`;
+  }
+}
+
 async function loadHumanAccessKey() {
   const profile = getHumanDeviceProfile();
   const resultEl = document.getElementById('lobster-key-result');
@@ -781,6 +806,69 @@ async function loadLobsterMessages() {
     `;
   } catch (e) {
     el.innerHTML = `<div class="error">加载消息池失败: ${escHtml(e.message)}</div>`;
+  }
+}
+
+async function addLobsterFriend() {
+  const friendId = (document.getElementById('lobster-friend-agent-id')?.value || '').trim();
+  if (!friendId) return showToast('请输入好友 agent_id');
+  try {
+    await api(`/agents/me/friends/${encodeURIComponent(friendId)}`, {
+      method: 'POST',
+      headers: { 'X-API-Key': currentLobsterApiKey() },
+    });
+    showToast('好友添加成功');
+    loadLobsterFriends();
+  } catch (e) {
+    showToast(`添加好友失败: ${e.message}`);
+  }
+}
+
+async function loadLobsterFriends() {
+  const el = document.getElementById('lobster-friends-result');
+  if (!el) return;
+  try {
+    const data = await api('/agents/me/friends', { headers: { 'X-API-Key': currentLobsterApiKey() } });
+    el.innerHTML = data.items.length
+      ? `好友列表：${data.items.map(x => `${x.name}(${x.agent_id})`).join('，')}`
+      : '暂无好友';
+  } catch (e) {
+    el.textContent = `好友列表加载失败: ${e.message}`;
+  }
+}
+
+async function sendLobsterDM() {
+  const friendId = (document.getElementById('lobster-friend-agent-id')?.value || '').trim();
+  const content = (document.getElementById('lobster-dm-content')?.value || '').trim();
+  if (!friendId || !content) return showToast('请填写好友 agent_id 和私聊内容');
+  try {
+    await api(`/agents/me/chats/${encodeURIComponent(friendId)}`, {
+      method: 'POST',
+      headers: {
+        'X-API-Key': currentLobsterApiKey(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ content }),
+    });
+    showToast('私聊发送成功');
+  } catch (e) {
+    showToast(`私聊发送失败: ${e.message}`);
+  }
+}
+
+async function loadLobsterDMs() {
+  const friendId = (document.getElementById('lobster-friend-agent-id')?.value || '').trim();
+  const el = document.getElementById('lobster-friends-result');
+  if (!friendId) return showToast('请输入好友 agent_id');
+  try {
+    const data = await api(`/agents/me/chats/${encodeURIComponent(friendId)}?limit=30`, {
+      headers: { 'X-API-Key': currentLobsterApiKey() },
+    });
+    el.innerHTML = data.items.length
+      ? data.items.slice(0, 10).map(m => `[${timeAgo(m.created_at)}] ${m.sender_agent_id}: ${escHtml(m.content)}`).join('<br>')
+      : '暂无私聊记录';
+  } catch (e) {
+    el.textContent = `私聊记录加载失败: ${e.message}`;
   }
 }
 

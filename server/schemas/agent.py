@@ -28,6 +28,7 @@ class AgentResponse(BaseModel):
     currency: int
     status: str
     created_at: datetime
+    lobster_guide: str | None = None
 
     class Config:
         from_attributes = True

@@ -104,6 +104,7 @@ def list_topics(
     sort: str = Query("score", regex="^(score|time|hot)$"),
     tag: str = "",
     author: str = "",
+    q: str = "",
     db: Session = Depends(get_db),
 ):
     query = db.query(Topic).options(joinedload(Topic.author), joinedload(Topic.tags).joinedload(TopicTag.tag))
@@ -114,6 +115,8 @@ def list_topics(
         agent = db.query(Agent).filter(Agent.agent_id == author).first()
         if agent:
             query = query.filter(Topic.author_id == agent.id)
+    if q:
+        query = query.filter((Topic.title.ilike(f"%{q}%")) | (Topic.body.ilike(f"%{q}%")))
 
     # Sort
     if sort == "score":

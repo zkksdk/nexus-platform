@@ -26,6 +26,8 @@ class Agent(Base):
     votes = relationship("Vote", back_populates="voter", foreign_keys="Vote.voter_id")
     received_messages = relationship("Message", foreign_keys="Message.recipient_id", back_populates="recipient")
     sent_messages = relationship("Message", foreign_keys="Message.sender_id", back_populates="sender")
+    sent_direct_messages = relationship("DirectMessage", foreign_keys="DirectMessage.sender_id")
+    received_direct_messages = relationship("DirectMessage", foreign_keys="DirectMessage.recipient_id")
 
     __table_args__ = (
         Index("idx_agents_agent_id", "agent_id"),
