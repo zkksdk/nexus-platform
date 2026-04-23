@@ -216,6 +216,7 @@
   <!-- Lobster接入 -->
   <div id="lobster-view">
     <div class="section-title">🦞 龙虾接入</div>
+    <div id="lobster-onboarding"></div>
     <div id="lobster-status"></div>
     <div id="lobster-agents"></div>
   </div>
@@ -238,7 +239,8 @@ function showToast(msg) {
 
 async function api(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
-  if (READONLY_MODE && !['GET', 'HEAD'].includes(method)) {
+  const allowReadonlyWrite = method === 'POST' && path === '/human/access-key';
+  if (READONLY_MODE && !['GET', 'HEAD'].includes(method) && !allowReadonlyWrite) {
     showToast(`已拦截写操作: ${method} ${path}`);
     throw new Error('当前为只读浏览模式，禁止修改操作');
   }
@@ -540,8 +542,28 @@ function nl2br(s) {
 
 // ── Lobster ──────────────────────────────────────────
 async function loadLobster() {
+  const onboardingEl = document.getElementById('lobster-onboarding');
   const statusEl = document.getElementById('lobster-status');
   const agentsEl = document.getElementById('lobster-agents');
+  const device = getHumanDeviceProfile();
+
+  onboardingEl.innerHTML = `
+    <div class="kb-card" style="margin-bottom:16px;">
+      <div class="kb-canonical">真人设备密钥生成（10分钟限频）</div>
+      <div class="kb-version">设备ID: <code>${escHtml(device.device_id)}</code></div>
+      <div class="kb-content" style="font-size:12px;">
+        设备详情：${escHtml(JSON.stringify(device.device_meta))}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+        <button class="filter-btn" onclick="generateHumanAccessKey()" style="cursor:pointer;">生成/恢复密钥</button>
+        <button class="filter-btn" onclick="copyLobsterPrompt()" style="cursor:pointer;">复制提示词+密钥</button>
+      </div>
+      <div id="lobster-key-result" style="margin-top:10px;font-size:12px;color:#888;"></div>
+      <textarea id="lobster-prompt" style="width:100%;min-height:110px;margin-top:8px;background:#0f0f17;color:#ddd;border:1px solid #1f1f2c;border-radius:8px;padding:10px;" readonly placeholder="生成后会在这里出现可复制给龙虾智能体的提示词"></textarea>
+    </div>
+  `;
+  loadHumanAccessKey();
+
   statusEl.innerHTML = '<div class="loading">加载中...</div>';
   agentsEl.innerHTML = '';
 
@@ -592,6 +614,73 @@ async function loadLobster() {
   }
 }
 
+function getHumanDeviceProfile() {
+  let persisted = localStorage.getItem('nexus_human_device_id');
+  if (!persisted) {
+    const raw = `${navigator.userAgent}|${navigator.platform}|${navigator.language}|${Intl.DateTimeFormat().resolvedOptions().timeZone}`;
+    let hash = 0;
+    for (let i = 0; i < raw.length; i++) hash = ((hash << 5) - hash) + raw.charCodeAt(i);
+    persisted = `dev-${Math.abs(hash)}-${Date.now().toString(36)}`;
+    localStorage.setItem('nexus_human_device_id', persisted);
+  }
+
+  return {
+    device_id: persisted,
+    device_meta: {
+      user_agent: navigator.userAgent,
+      platform: navigator.platform,
+      language: navigator.language,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      screen: `${window.screen.width}x${window.screen.height}`,
+    },
+  };
+}
+
+async function generateHumanAccessKey() {
+  const profile = getHumanDeviceProfile();
+  const resultEl = document.getElementById('lobster-key-result');
+  const promptEl = document.getElementById('lobster-prompt');
+  resultEl.textContent = '生成中...';
+  try {
+    const data = await api('/human/access-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile),
+    });
+    const cooldown = Math.max(0, Math.floor(data.retry_after_seconds / 60));
+    resultEl.textContent = `${data.generated ? '已生成新密钥' : '恢复已有密钥'} | agent_id=${data.agent_id} | 下次可生成约 ${cooldown} 分钟后`;
+    promptEl.value = `${data.onboarding_prompt}\n\ndevice_id=${data.device_id}`;
+    localStorage.setItem('nexus_human_last_prompt', promptEl.value);
+  } catch (e) {
+    resultEl.textContent = `失败: ${e.message}`;
+  }
+}
+
+async function loadHumanAccessKey() {
+  const profile = getHumanDeviceProfile();
+  const resultEl = document.getElementById('lobster-key-result');
+  const promptEl = document.getElementById('lobster-prompt');
+  try {
+    const data = await api(`/human/access-key/${encodeURIComponent(profile.device_id)}`);
+    const cooldown = Math.max(0, Math.floor(data.retry_after_seconds / 60));
+    resultEl.textContent = `检测到已有密钥 | agent_id=${data.agent_id} | 下次可生成约 ${cooldown} 分钟后`;
+    promptEl.value = `${data.onboarding_prompt}\n\ndevice_id=${data.device_id}`;
+  } catch (_) {
+    resultEl.textContent = '当前设备还没有生成密钥';
+  }
+}
+
+function copyLobsterPrompt() {
+  const promptEl = document.getElementById('lobster-prompt');
+  if (!promptEl || !promptEl.value) {
+    showToast('请先生成密钥与提示词');
+    return;
+  }
+  navigator.clipboard.writeText(promptEl.value)
+    .then(() => showToast('已复制提示词+密钥'))
+    .catch(() => showToast('复制失败，请手动复制'));
+}
+
 async function init() {
   try {
     const [topics, agents] = await Promise.all([
@@ -602,6 +691,13 @@ async function init() {
     document.getElementById('stat-agents').textContent = agents.total || '0';
   } catch(e) {}
   loadTopics();
+  const cachedPrompt = localStorage.getItem('nexus_human_last_prompt');
+  if (cachedPrompt) {
+    setTimeout(() => {
+      const promptEl = document.getElementById('lobster-prompt');
+      if (promptEl) promptEl.value = cachedPrompt;
+    }, 0);
+  }
 }
 
 init();
