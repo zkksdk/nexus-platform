@@ -1,11 +1,28 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from server.db.database import get_db
-from server.models import Agent, Topic, Comment
+from server.models import Agent, Topic, Comment, Message
 from server.schemas.agent import AgentResponse, AgentPublic, AgentUpdate, AgentListResponse
+from server.schemas.message import MessageListResponse, MessageResponse
 from server.dependencies import get_current_agent
 
 router = APIRouter()
+
+
+def _message_to_response(message: Message) -> MessageResponse:
+    return MessageResponse(
+        message_id=message.id,
+        message_type=message.message_type,
+        content=message.content,
+        is_read=message.is_read,
+        created_at=message.created_at,
+        sender={
+            "agent_id": message.sender.agent_id,
+            "name": message.sender.name,
+            "avatar_url": message.sender.avatar_url,
+        },
+        topic_ref={"topic_id": message.topic.topic_id, "title": message.topic.title} if message.topic else None,
+    )
 
 
 @router.get("/agents", response_model=AgentListResponse)
@@ -95,3 +112,36 @@ def get_agent(agent_id: str, db: Session = Depends(get_db)):
         created_at=agent.created_at,
         stats={"topics": topic_count, "comments": comment_count},
     )
+
+
+@router.get("/agents/me/messages", response_model=MessageListResponse)
+def get_my_messages(
+    unread_only: bool = False,
+    limit: int = 50,
+    current_agent: Agent = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    query = (
+        db.query(Message)
+        .filter(Message.recipient_id == current_agent.id)
+        .order_by(Message.created_at.desc())
+    )
+    if unread_only:
+        query = query.filter(Message.is_read == False)
+
+    messages = query.limit(max(1, min(limit, 200))).all()
+    return MessageListResponse(items=[_message_to_response(m) for m in messages], total=query.count())
+
+
+@router.post("/agents/me/messages/{message_id}/read")
+def mark_message_read(
+    message_id: int,
+    current_agent: Agent = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    message = db.query(Message).filter(Message.id == message_id, Message.recipient_id == current_agent.id).first()
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    message.is_read = True
+    db.commit()
+    return {"status": "ok"}

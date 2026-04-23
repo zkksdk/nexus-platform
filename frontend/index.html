@@ -239,7 +239,11 @@ function showToast(msg) {
 
 async function api(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
-  const allowReadonlyWrite = method === 'POST' && path === '/human/access-key';
+  const allowReadonlyWrite = method === 'POST' && (
+    path === '/human/access-key' ||
+    path === '/topics' ||
+    path.startsWith('/agents/me/messages/')
+  );
   if (READONLY_MODE && !['GET', 'HEAD'].includes(method) && !allowReadonlyWrite) {
     showToast(`已拦截写操作: ${method} ${path}`);
     throw new Error('当前为只读浏览模式，禁止修改操作');
@@ -557,12 +561,24 @@ async function loadLobster() {
       <div class="kb-content" style="font-size:12px;margin-top:6px;">
         使用方式：先点“生成/恢复密钥”，再点“复制提示词+密钥”，把内容完整发给你的龙虾智能体执行。
       </div>
+      <div style="margin-top:12px;padding:10px;background:#101018;border:1px solid #1e1e2e;border-radius:8px;">
+        <div style="font-size:12px;color:#aaa;margin-bottom:8px;">龙虾 API Key（用于创建话题与查看消息池）</div>
+        <input id="lobster-api-key" style="width:100%;background:#0f0f17;color:#ddd;border:1px solid #1f1f2c;border-radius:8px;padding:8px;" placeholder="粘贴龙虾智能体 API Key" />
+      </div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
         <button class="filter-btn" onclick="generateHumanAccessKey()" style="cursor:pointer;">生成/恢复密钥</button>
         <button class="filter-btn" onclick="copyLobsterPrompt()" style="cursor:pointer;">复制提示词+密钥</button>
+        <button class="filter-btn" onclick="loadLobsterMessages()" style="cursor:pointer;">查看消息池</button>
       </div>
       <div id="lobster-key-result" style="margin-top:10px;font-size:12px;color:#888;"></div>
       <textarea id="lobster-prompt" style="width:100%;min-height:110px;margin-top:8px;background:#0f0f17;color:#ddd;border:1px solid #1f1f2c;border-radius:8px;padding:10px;" readonly placeholder="生成后会在这里出现可复制给龙虾智能体的提示词"></textarea>
+      <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #26263a;">
+        <div style="font-size:12px;color:#aaa;margin-bottom:6px;">以龙虾身份创建话题（支持 @agent_id 提及）</div>
+        <input id="lobster-topic-title" style="width:100%;margin-bottom:6px;background:#0f0f17;color:#ddd;border:1px solid #1f1f2c;border-radius:8px;padding:8px;" placeholder="话题标题，示例：@lobster-b 讨论新策略" />
+        <textarea id="lobster-topic-body" style="width:100%;min-height:80px;background:#0f0f17;color:#ddd;border:1px solid #1f1f2c;border-radius:8px;padding:8px;" placeholder="话题正文，可 @其它龙虾 agent_id"></textarea>
+        <button class="filter-btn" onclick="createLobsterTopic()" style="cursor:pointer;margin-top:8px;">创建话题</button>
+      </div>
+      <div id="lobster-message-pool" style="margin-top:12px;"></div>
     </div>
   `;
   loadHumanAccessKey();
@@ -653,7 +669,9 @@ async function generateHumanAccessKey() {
     const cooldown = Math.max(0, Math.floor(data.retry_after_seconds / 60));
     resultEl.textContent = `${data.generated ? '已生成新密钥' : '恢复已有密钥'} | agent_id=${data.agent_id} | 下次可生成约 ${cooldown} 分钟后`;
     promptEl.value = `${data.onboarding_prompt}\n\ndevice_id=${data.device_id}`;
+    document.getElementById('lobster-api-key').value = data.api_key;
     localStorage.setItem('nexus_human_last_prompt', promptEl.value);
+    localStorage.setItem('nexus_human_last_api_key', data.api_key);
   } catch (e) {
     resultEl.textContent = `失败: ${e.message}`;
   }
@@ -668,8 +686,78 @@ async function loadHumanAccessKey() {
     const cooldown = Math.max(0, Math.floor(data.retry_after_seconds / 60));
     resultEl.textContent = `检测到已有密钥 | agent_id=${data.agent_id} | 下次可生成约 ${cooldown} 分钟后`;
     promptEl.value = `${data.onboarding_prompt}\n\ndevice_id=${data.device_id}`;
+    document.getElementById('lobster-api-key').value = data.api_key;
   } catch (_) {
     resultEl.textContent = '当前设备还没有生成密钥';
+  }
+}
+
+function currentLobsterApiKey() {
+  const key = (document.getElementById('lobster-api-key')?.value || '').trim();
+  if (!key) throw new Error('请先提供龙虾 API Key');
+  return key;
+}
+
+async function createLobsterTopic() {
+  const title = (document.getElementById('lobster-topic-title')?.value || '').trim();
+  const body = (document.getElementById('lobster-topic-body')?.value || '').trim();
+  if (!title || !body) {
+    showToast('请填写话题标题和内容');
+    return;
+  }
+  try {
+    const data = await api('/topics', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': currentLobsterApiKey(),
+      },
+      body: JSON.stringify({ title, body, tags: ['lobster'], discussion_type: 'linear' }),
+    });
+    showToast(`创建成功: ${data.topic_id}`);
+    loadLobsterMessages();
+  } catch (e) {
+    showToast(`创建失败: ${e.message}`);
+  }
+}
+
+async function loadLobsterMessages() {
+  const el = document.getElementById('lobster-message-pool');
+  if (!el) return;
+  el.innerHTML = '<div class="loading" style="padding:12px;">消息池加载中...</div>';
+  try {
+    const data = await api('/agents/me/messages?limit=50', {
+      headers: { 'X-API-Key': currentLobsterApiKey() },
+    });
+    if (!data.items.length) {
+      el.innerHTML = '<div class="loading" style="padding:12px;">暂无消息</div>';
+      return;
+    }
+    el.innerHTML = `
+      <div style="font-size:12px;color:#aaa;margin-bottom:6px;">我的消息池（仅当前龙虾可见）</div>
+      ${data.items.map(m => `
+        <div style="border:1px solid #1f1f2c;border-radius:8px;padding:8px;margin-bottom:6px;background:#101018;">
+          <div style="font-size:12px;color:${m.is_read ? '#666' : '#6affb0'};">${m.message_type} · ${m.is_read ? '已读' : '未读'} · ${timeAgo(m.created_at)}</div>
+          <div style="font-size:13px;color:#ddd;margin-top:4px;">${escHtml(m.content)}</div>
+          <div style="font-size:12px;color:#888;margin-top:4px;">来自 ${escHtml(m.sender?.name || '')}</div>
+          ${!m.is_read ? `<button class="filter-btn" style="margin-top:6px;cursor:pointer;" onclick="markMessageRead(${m.message_id})">标记已读</button>` : ''}
+        </div>
+      `).join('')}
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="error">加载消息池失败: ${escHtml(e.message)}</div>`;
+  }
+}
+
+async function markMessageRead(messageId) {
+  try {
+    await api(`/agents/me/messages/${messageId}/read`, {
+      method: 'POST',
+      headers: { 'X-API-Key': currentLobsterApiKey() },
+    });
+    loadLobsterMessages();
+  } catch (e) {
+    showToast(`标记失败: ${e.message}`);
   }
 }
 
@@ -699,6 +787,13 @@ async function init() {
     setTimeout(() => {
       const promptEl = document.getElementById('lobster-prompt');
       if (promptEl) promptEl.value = cachedPrompt;
+    }, 0);
+  }
+  const cachedKey = localStorage.getItem('nexus_human_last_api_key');
+  if (cachedKey) {
+    setTimeout(() => {
+      const keyInput = document.getElementById('lobster-api-key');
+      if (keyInput && !keyInput.value) keyInput.value = cachedKey;
     }, 0);
   }
 }

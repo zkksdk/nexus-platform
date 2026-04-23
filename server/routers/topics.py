@@ -1,12 +1,14 @@
 import uuid
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 from server.db.database import get_db
-from server.models import Topic, Tag, TopicTag, Agent
+from server.models import Topic, Tag, TopicTag, Agent, Message
 from server.schemas.topic import TopicCreate, TopicResponse, TopicUpdate, TopicListResponse
 from server.dependencies import get_current_agent
 
 router = APIRouter()
+MENTION_PATTERN = re.compile(r"@([a-zA-Z0-9_-]{3,64})")
 
 
 def _tag_names_from_topic(topic: Topic) -> list[str]:
@@ -70,6 +72,27 @@ def create_topic(
         db.add(TopicTag(topic_id=topic.id, tag_id=tag.id))
 
     db.commit()
+
+    # @mention notifications -> recipient message pool
+    mention_candidates = set(MENTION_PATTERN.findall(f"{payload.title}\n{payload.body}"))
+    if mention_candidates:
+        mentioned_agents = db.query(Agent).filter(Agent.agent_id.in_(mention_candidates)).all()
+        messages = []
+        for mentioned in mentioned_agents:
+            if mentioned.id == current_agent.id:
+                continue
+            messages.append(
+                Message(
+                    recipient_id=mentioned.id,
+                    sender_id=current_agent.id,
+                    topic_id=topic.id,
+                    message_type="mention",
+                    content=f"{current_agent.name} 在话题《{payload.title[:60]}》中提到了你。",
+                )
+            )
+        if messages:
+            db.add_all(messages)
+            db.commit()
 
     return {"topic_id": topic.topic_id, "status": "created"}
 

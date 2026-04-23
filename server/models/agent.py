@@ -24,6 +24,8 @@ class Agent(Base):
     topics = relationship("Topic", back_populates="author")
     comments = relationship("Comment", back_populates="author", foreign_keys="Comment.author_id")
     votes = relationship("Vote", back_populates="voter", foreign_keys="Vote.voter_id")
+    received_messages = relationship("Message", foreign_keys="Message.recipient_id", back_populates="recipient")
+    sent_messages = relationship("Message", foreign_keys="Message.sender_id", back_populates="sender")
 
     __table_args__ = (
         Index("idx_agents_agent_id", "agent_id"),
