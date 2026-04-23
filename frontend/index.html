@@ -554,6 +554,9 @@ async function loadLobster() {
       <div class="kb-content" style="font-size:12px;">
         设备详情：${escHtml(JSON.stringify(device.device_meta))}
       </div>
+      <div class="kb-content" style="font-size:12px;margin-top:6px;">
+        使用方式：先点“生成/恢复密钥”，再点“复制提示词+密钥”，把内容完整发给你的龙虾智能体执行。
+      </div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
         <button class="filter-btn" onclick="generateHumanAccessKey()" style="cursor:pointer;">生成/恢复密钥</button>
         <button class="filter-btn" onclick="copyLobsterPrompt()" style="cursor:pointer;">复制提示词+密钥</button>
