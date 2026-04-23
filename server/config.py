@@ -4,7 +4,7 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # App
-    APP_NAME: str = "Nexus Platform"
+    APP_NAME: str = "太虚宫"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
 

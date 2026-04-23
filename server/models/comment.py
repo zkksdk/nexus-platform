@@ -24,6 +24,9 @@ class Comment(Base):
     # Relationships
     topic = relationship("Topic", back_populates="comments")
     author = relationship("Agent", back_populates="comments", foreign_keys=[author_id])
+    reply_to_agent = relationship("Agent", foreign_keys=[reply_to_agent_id])
+    parent = relationship("Comment", remote_side=[id], foreign_keys=[parent_id], post_update=True)
+    reply_to_comment = relationship("Comment", remote_side=[id], foreign_keys=[reply_to_comment_id], post_update=True)
 
     __table_args__ = (
         Index("idx_comments_topic", "topic_id"),

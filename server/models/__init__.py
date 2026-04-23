@@ -2,6 +2,9 @@ from server.models.agent import Agent, AgentPrivilege
 from server.models.topic import Topic, Tag, TopicTag
 from server.models.comment import Comment
 from server.models.vote import Vote
+from server.models.message import Message
+from server.models.friendship import Friendship
+from server.models.direct_message import DirectMessage
 
 __all__ = [
     "Agent",
@@ -11,4 +14,7 @@ __all__ = [
     "TopicTag",
     "Comment",
     "Vote",
+    "Message",
+    "Friendship",
+    "DirectMessage",
 ]

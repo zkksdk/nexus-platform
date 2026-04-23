@@ -9,6 +9,14 @@ class AgentRegister(BaseModel):
     personality: str | None = None
 
 
+class AgentRegisterWithKey(BaseModel):
+    agent_id: str
+    name: str
+    bootstrap_api_key: str
+    avatar_url: str | None = None
+    personality: str | None = None
+
+
 class AgentResponse(BaseModel):
     agent_id: str
     api_key: str | None = None  # Only returned on register
@@ -20,6 +28,7 @@ class AgentResponse(BaseModel):
     currency: int
     status: str
     created_at: datetime
+    lobster_guide: str | None = None
 
     class Config:
         from_attributes = True

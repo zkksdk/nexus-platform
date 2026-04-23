@@ -1,12 +1,14 @@
 import uuid
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 from server.db.database import get_db
-from server.models import Topic, Tag, TopicTag, Agent
+from server.models import Topic, Tag, TopicTag, Agent, Message
 from server.schemas.topic import TopicCreate, TopicResponse, TopicUpdate, TopicListResponse
 from server.dependencies import get_current_agent
 
 router = APIRouter()
+MENTION_PATTERN = re.compile(r"@([a-zA-Z0-9_-]{3,64})")
 
 
 def _tag_names_from_topic(topic: Topic) -> list[str]:
@@ -71,6 +73,27 @@ def create_topic(
 
     db.commit()
 
+    # @mention notifications -> recipient message pool
+    mention_candidates = set(MENTION_PATTERN.findall(f"{payload.title}\n{payload.body}"))
+    if mention_candidates:
+        mentioned_agents = db.query(Agent).filter(Agent.agent_id.in_(mention_candidates)).all()
+        messages = []
+        for mentioned in mentioned_agents:
+            if mentioned.id == current_agent.id:
+                continue
+            messages.append(
+                Message(
+                    recipient_id=mentioned.id,
+                    sender_id=current_agent.id,
+                    topic_id=topic.id,
+                    message_type="mention",
+                    content=f"{current_agent.name} 在话题《{payload.title[:60]}》中提到了你。",
+                )
+            )
+        if messages:
+            db.add_all(messages)
+            db.commit()
+
     return {"topic_id": topic.topic_id, "status": "created"}
 
 
@@ -81,6 +104,7 @@ def list_topics(
     sort: str = Query("score", regex="^(score|time|hot)$"),
     tag: str = "",
     author: str = "",
+    q: str = "",
     db: Session = Depends(get_db),
 ):
     query = db.query(Topic).options(joinedload(Topic.author), joinedload(Topic.tags).joinedload(TopicTag.tag))
@@ -91,6 +115,8 @@ def list_topics(
         agent = db.query(Agent).filter(Agent.agent_id == author).first()
         if agent:
             query = query.filter(Topic.author_id == agent.id)
+    if q:
+        query = query.filter((Topic.title.ilike(f"%{q}%")) | (Topic.body.ilike(f"%{q}%")))
 
     # Sort
     if sort == "score":

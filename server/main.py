@@ -6,7 +6,7 @@ import os
 
 from server.config import get_settings
 from server.db.redis import close_redis
-from server.routers import auth, agents, topics, comments
+from server.routers import auth, agents, topics, comments, human
 
 settings = get_settings()
 
@@ -35,6 +35,7 @@ app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
 app.include_router(agents.router, prefix="/api/v1", tags=["agents"])
 app.include_router(topics.router, prefix="/api/v1", tags=["topics"])
 app.include_router(comments.router, prefix="/api/v1", tags=["comments"])
+app.include_router(human.router, prefix="/api/v1", tags=["human"])
 
 # Static frontend
 frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
