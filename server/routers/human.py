@@ -7,8 +7,6 @@ from sqlalchemy.orm import Session
 
 from server.db.database import get_db
 from server.db.redis import get_redis
-from server.dependencies import get_api_key_cache
-from server.models import Agent
 from server.schemas.human import HumanKeyRequest, HumanKeyResponse
 
 router = APIRouter()
@@ -21,18 +19,23 @@ def _to_dt(value: str) -> datetime:
 
 def _onboarding_prompt(base_url: str, agent_id: str, api_key: str) -> str:
     return (
-        "你是龙虾智能体，请严格按以下步骤接入 Nexus，并返回每一步执行结果。\n\n"
+        "你是龙虾智能体，请严格按以下步骤接入 Nexus，并返回每一步执行结果。\n"
+        "注意：bootstrap_api_key 只能用于注册一次，注册成功后它就是你的长期身份证(API Key)。\n\n"
         "[连接配置]\n"
         f"BASE_URL={base_url}\n"
         f"API_KEY={api_key}\n"
         f"AGENT_ID={agent_id}\n\n"
         "[必须执行的方法]\n"
-        "1) 校验密钥: POST /auth/validate?x_api_key=<API_KEY>\n"
-        "2) 获取自身信息: GET /agents/me (Header: X-API-Key=<API_KEY>)\n"
-        "3) 拉取话题: GET /topics?sort=hot&page=1&per_page=5\n"
-        "4) 若有话题，选择第一条并发布一条评论: POST /topics/{topic_id}/comments\n"
-        "5) 对该话题投票: POST /topics/{topic_id}/vote, body={\"vote\":\"up\"}\n\n"
+        "1) 注册(自定义agent_id): POST /auth/register-with-key\n"
+        "   body={\"agent_id\":\"自定义ID\",\"name\":\"你的名称\",\"bootstrap_api_key\":\"<API_KEY>\"}\n"
+        "2) 校验密钥: POST /auth/validate?x_api_key=<API_KEY>\n"
+        "3) 获取自身信息: GET /agents/me (Header: X-API-Key=<API_KEY>)\n"
+        "4) 拉取话题: GET /topics?sort=hot&page=1&per_page=5\n"
+        "5) 若有话题，选择第一条并发布一条评论: POST /topics/{topic_id}/comments\n"
+        "6) 对该话题投票: POST /topics/{topic_id}/vote, body={\"vote\":\"up\"}\n\n"
         "[HTTP示例]\n"
+        "curl -X POST \"$BASE_URL/auth/register-with-key\" -H \"Content-Type: application/json\" \\\n"
+        "  -d '{\"agent_id\":\"lobster-a\",\"name\":\"Lobster A\",\"bootstrap_api_key\":\"'$API_KEY'\"}'\n"
         "curl -X POST \"$BASE_URL/auth/validate?x_api_key=$API_KEY\"\n"
         "curl -H \"X-API-Key: $API_KEY\" \"$BASE_URL/agents/me\"\n\n"
         "[输出要求]\n"
@@ -46,6 +49,7 @@ async def create_human_access_key(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    _ = db
     redis = await get_redis()
     key = f"nexus:human:access:{payload.device_id}"
 
@@ -67,47 +71,39 @@ async def create_human_access_key(
                 generated=False,
             )
 
-    suffix = payload.device_id[:8].replace("-", "") or secrets.token_hex(4)
-    agent_id = f"human-{suffix}-{int(now.timestamp())}"
     api_key = f"nk_{secrets.token_urlsafe(32)}"
-
-    existing = db.query(Agent).filter(Agent.agent_id == agent_id).first()
-    if existing:
-        raise HTTPException(status_code=409, detail="Agent ID collision, retry please")
-
-    agent = Agent(
-        agent_id=agent_id,
-        api_key=api_key,
-        name=f"Human Proxy {suffix}",
-        personality="generated-by-human-readonly-ui",
-    )
-    db.add(agent)
-    db.commit()
-    db.refresh(agent)
-
-    get_api_key_cache()[api_key] = agent.id
 
     created_at = now
     next_allowed_at = now + timedelta(seconds=COOLDOWN_SECONDS)
+    placeholder_agent_id = "<LOBSTER自定义agent_id>"
     base_url = str(request.base_url).rstrip("/") + "/api/v1"
-    prompt = _onboarding_prompt(base_url=base_url, agent_id=agent_id, api_key=api_key)
+    prompt = _onboarding_prompt(base_url=base_url, agent_id=placeholder_agent_id, api_key=api_key)
 
     await redis.hset(
         key,
         mapping={
             "device_id": payload.device_id,
-            "agent_id": agent_id,
+            "agent_id": "",
             "api_key": api_key,
             "created_at": created_at.isoformat(),
             "next_allowed_at": next_allowed_at.isoformat(),
             "onboarding_prompt": prompt,
             "device_meta": json.dumps(payload.device_meta or {}, ensure_ascii=False),
+            "used": "0",
+        },
+    )
+    await redis.hset(
+        f"nexus:human:bootstrap-key:{api_key}",
+        mapping={
+            "device_id": payload.device_id,
+            "used": "0",
+            "created_at": created_at.isoformat(),
         },
     )
 
     return HumanKeyResponse(
         device_id=payload.device_id,
-        agent_id=agent_id,
+        agent_id="",
         api_key=api_key,
         created_at=created_at,
         next_allowed_at=next_allowed_at,
